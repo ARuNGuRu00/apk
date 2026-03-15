@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 void main() {
   runApp(MyApp());
@@ -48,56 +48,71 @@ class BluetoothDeviceSheet extends StatefulWidget {
 }
 
 class _BluetoothDeviceSheetState extends State<BluetoothDeviceSheet> {
-  List<BluetoothDevice> pairedDevices = [];
-  List<BluetoothDiscoveryResult> availableDevices = [];
+  List<BluetoothDevice> systemDevices = [];
+  List<ScanResult> scanResults = [];
   bool scanning = false;
 
   @override
   void initState() {
     super.initState();
-    getPaired();
+    getSystemDevices();
   }
 
-  void getPaired() async {
-    List<BluetoothDevice> devices = await FlutterBluetoothSerial.instance
-        .getBondedDevices();
+  void getSystemDevices() async {
+    List<BluetoothDevice> devices = await FlutterBluePlus.systemDevices([]);
 
     setState(() {
-      pairedDevices = devices;
+      systemDevices = devices;
     });
   }
 
-  void startScan() {
-    availableDevices.clear();
+  void startScan() async {
+    scanResults.clear();
 
     setState(() {
       scanning = true;
     });
 
-    FlutterBluetoothSerial.instance
-        .startDiscovery()
-        .listen((result) {
-          setState(() {
-            availableDevices.add(result);
-          });
-        })
-        .onDone(() {
-          setState(() {
-            scanning = false;
-          });
-        });
+    await FlutterBluePlus.startScan(timeout: Duration(seconds: 5));
+
+    FlutterBluePlus.scanResults.listen((results) {
+      setState(() {
+        scanResults = results;
+      });
+    });
+
+    Future.delayed(Duration(seconds: 5), () {
+      setState(() {
+        scanning = false;
+      });
+    });
   }
 
-  Widget deviceTile(String name, String address, IconData icon) {
+  Widget deviceTile(
+    String name,
+    String id,
+    IconData icon,
+    BluetoothDevice device,
+  ) {
     return ListTile(
       leading: Icon(icon, size: 30),
 
       title: Text(name),
 
-      subtitle: Text(address),
+      subtitle: Text(id),
 
-      onTap: () {
-        Navigator.pop(context);
+      onTap: () async {
+        try {
+          await device.connect();
+
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("Connected to $name")));
+
+          Navigator.pop(context);
+        } catch (e) {
+          print("Connection error");
+        }
       },
     );
   }
@@ -127,12 +142,17 @@ class _BluetoothDeviceSheetState extends State<BluetoothDeviceSheet> {
           SizedBox(height: 20),
 
           Text(
-            "Paired Devices",
+            "System Devices",
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
 
-          ...pairedDevices.map(
-            (d) => deviceTile(d.name ?? "Unknown", d.address, Icons.headphones),
+          ...systemDevices.map(
+            (d) => deviceTile(
+              d.platformName.isEmpty ? "Unknown" : d.platformName,
+              d.remoteId.toString(),
+              Icons.bluetooth_connected,
+              d,
+            ),
           ),
 
           SizedBox(height: 10),
@@ -144,15 +164,18 @@ class _BluetoothDeviceSheetState extends State<BluetoothDeviceSheet> {
 
           Expanded(
             child: ListView(
-              children: availableDevices
-                  .map(
-                    (d) => deviceTile(
-                      d.device.name ?? "Unknown",
-                      d.device.address,
-                      Icons.bluetooth,
-                    ),
-                  )
-                  .toList(),
+              children: scanResults.map((r) {
+                final device = r.device;
+
+                return deviceTile(
+                  device.platformName.isEmpty
+                      ? "Unknown Device"
+                      : device.platformName,
+                  device.remoteId.toString(),
+                  Icons.bluetooth,
+                  device,
+                );
+              }).toList(),
             ),
           ),
 
@@ -160,13 +183,16 @@ class _BluetoothDeviceSheetState extends State<BluetoothDeviceSheet> {
 
           SizedBox(
             width: double.infinity,
+
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Color(0xff0b9a8a),
                 padding: EdgeInsets.all(15),
               ),
-              child: Text("START SCANNING"),
-              onPressed: startScan,
+
+              child: Text(scanning ? "SCANNING..." : "START SCANNING"),
+
+              onPressed: scanning ? null : startScan,
             ),
           ),
         ],
